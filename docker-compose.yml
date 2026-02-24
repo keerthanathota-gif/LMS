@@ -54,8 +54,7 @@ x-base: &base
   MINIO_BUCKET_AVATARS: lms-avatars
   # Azure OpenAI
   AZURE_OPENAI_ENDPOINT: https://prade-mdpceiev-eastus2.cognitiveservices.azure.com/
-  # Real key should be provided via environment / .env, not committed
-  AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-dev-azure-openai-key}
+  AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
   AZURE_OPENAI_DEPLOYMENT: gpt-5-chat
   AZURE_OPENAI_API_VERSION: "2025-01-01-preview"
   AZURE_OPENAI_MINI_DEPLOYMENT: gpt-5-chat

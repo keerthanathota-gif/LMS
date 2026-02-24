@@ -256,7 +256,7 @@ export default function LearnPage() {
                 />
               </div>
               <div className="flex-[3] min-w-[200px] max-w-[300px]">
-                <TranscriptPanel transcript={currentModule.transcript} />
+                <TranscriptToggle transcript={currentModule.transcript} />
               </div>
             </div>
           ) : (
@@ -473,6 +473,68 @@ function TranscriptToggle({ transcript }: { transcript: string }) {
       {open && (
         <div className="mt-3 p-4 bg-surface-secondary rounded-xl text-xs text-text-secondary leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">
           {transcript}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Discussion section (per module) ──────────────────────────────────────────
+interface Discussion { id: string; userId: string; userName: string; body: string; createdAt: string }
+
+function DiscussionSection({ courseId, moduleId }: { courseId: string; moduleId: string }) {
+  const [items, setItems] = useState<Discussion[]>([])
+  const [body, setBody] = useState('')
+  const [posting, setPosting] = useState(false)
+
+  useEffect(() => {
+    api.get(`/courses/${courseId}/discussions?moduleId=${moduleId}`)
+      .then(r => setItems(r.data?.discussions ?? r.data ?? []))
+      .catch(() => {})
+  }, [courseId, moduleId])
+
+  async function post() {
+    if (!body.trim()) return
+    setPosting(true)
+    try {
+      const r = await api.post(`/courses/${courseId}/discussions`, { moduleId, body: body.trim() })
+      setItems(prev => [r.data, ...prev])
+      setBody('')
+    } catch { /* ignore */ } finally {
+      setPosting(false)
+    }
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto mt-8">
+      <h3 className="text-sm font-semibold text-text-primary mb-3">Discussion</h3>
+      <div className="flex gap-2 mb-4">
+        <input
+          value={body}
+          onChange={e => setBody(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && post()}
+          placeholder="Ask a question or share a thought…"
+          className="flex-1 px-3 py-2 text-xs bg-surface-secondary border border-surface-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:border-brand-400"
+        />
+        <button
+          onClick={post}
+          disabled={posting || !body.trim()}
+          className="btn-primary text-xs px-3 disabled:opacity-50"
+        >
+          Post
+        </button>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs text-text-muted">No comments yet. Be the first!</p>
+      ) : (
+        <div className="space-y-3">
+          {items.map(d => (
+            <div key={d.id} className="p-3 bg-surface-secondary rounded-xl text-xs">
+              <span className="font-medium text-text-primary">{d.userName ?? 'User'}</span>
+              <span className="ml-2 text-text-muted">{new Date(d.createdAt).toLocaleDateString()}</span>
+              <p className="mt-1 text-text-secondary">{d.body}</p>
+            </div>
+          ))}
         </div>
       )}
     </div>
