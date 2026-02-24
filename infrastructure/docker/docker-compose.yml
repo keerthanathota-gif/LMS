@@ -1,0 +1,179 @@
+version: "3.9"
+
+# ─── Local Development Stack ────────────────────────────────────────────────
+# Run: docker compose -f infrastructure/docker/docker-compose.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: lms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       lms_db
+      POSTGRES_USER:     lms_user
+      POSTGRES_PASSWORD: lms_dev_password_123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lms_user -d lms_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: lms-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Redpanda (Kafka-compatible) ────────────────────────────────────────────
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: lms-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://localhost:9092
+    ports:
+      - "9092:9092"
+      - "9644:9644"  # Admin API
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Redpanda Console (Kafka UI) ────────────────────────────────────────────
+  redpanda-console:
+    image: redpandadata/console:latest
+    container_name: lms-redpanda-console
+    restart: unless-stopped
+    depends_on: [redpanda]
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "8082:8080"
+
+  # ── MinIO (S3-compatible Object Storage) ──────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: lms-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER:     minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Web Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Keycloak (Auth Server) ─────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: lms-keycloak
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN:          admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB:                   postgres
+      KC_DB_URL:               jdbc:postgresql://postgres:5432/lms_db
+      KC_DB_USERNAME:          lms_user
+      KC_DB_PASSWORD:          lms_dev_password_123
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Weaviate (Vector DB) ───────────────────────────────────────────────────
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    container_name: lms-weaviate
+    restart: unless-stopped
+    environment:
+      QUERY_DEFAULTS_LIMIT:               25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH:              /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE:          none
+      ENABLE_MODULES:                     ""
+      CLUSTER_HOSTNAME:                   node1
+    ports:
+      - "8083:8080"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+
+  # ── ClickHouse (Analytics + Audit) ────────────────────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: lms-clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"  # HTTP API
+      - "9001:9000"  # Native protocol
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  # ── Mailhog (Fake SMTP for local dev — no real emails sent) ───────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: lms-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI (view sent emails)
+
+  # ── ClamAV (Virus Scanning) ────────────────────────────────────────────────
+  clamav:
+    image: clamav/clamav:stable
+    container_name: lms-clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+
+# ─── Volumes ─────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  redis_data:
+  redpanda_data:
+  minio_data:
+  weaviate_data:
+  clickhouse_data:
+  clamav_data:

@@ -1,0 +1,521 @@
+# =============================================================================
+# LMS — Full Stack Docker Compose
+# =============================================================================
+# Run:    docker compose up --build -d
+# Stop:   docker compose down
+# Logs:   docker compose logs -f <service-name>
+#
+# Admin Portal:   http://127.0.0.1:5000  (admin@lms.local / admin123)
+# Learner Portal: http://127.0.0.1:5174
+# Mailhog:        http://localhost:8025  (view sent emails)
+# MinIO Console:  http://localhost:9001  (minioadmin / minioadmin)
+# =============================================================================
+
+# ─── Shared environment variables ────────────────────────────────────────────
+x-base: &base
+  NODE_ENV: production
+  LOG_LEVEL: debug
+  # Database
+  DATABASE_URL: postgresql://lms_user:lms_dev_password_123@postgres:5432/lms_db
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: lms_db
+  DB_USER: lms_user
+  DB_PASSWORD: lms_dev_password_123
+  # Redis
+  REDIS_URL: redis://redis:6379
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  # Kafka / Redpanda
+  KAFKA_BROKERS: redpanda:9092
+  KAFKA_CLIENT_ID: lms-service
+  KAFKA_GROUP_ID: lms-consumer-group
+  # Security
+  AUDIT_SIGNING_SECRET: dev_audit_secret_replace_in_production_must_be_64_chars_long_xxxx
+  INTERNAL_JWT_SECRET: dev_internal_secret_replace_in_production_also_needs_to_be_long
+  JWT_ISSUER: http://keycloak:8080/realms/lms
+  KEYCLOAK_URL: http://keycloak:8080
+  KEYCLOAK_REALM: lms
+  # Email
+  SMTP_HOST: mailhog
+  SMTP_PORT: "1025"
+  SMTP_SECURE: "false"
+  EMAIL_FROM: noreply@lms.local
+  EMAIL_FROM_NAME: LMS
+  # MinIO
+  MINIO_ENDPOINT: http://minio:9000
+  MINIO_PORT: "9000"
+  MINIO_USE_SSL: "false"
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
+  MINIO_BUCKET: lms-content
+  MINIO_BUCKET_CONTENT: lms-content
+  MINIO_BUCKET_CERTS: lms-certificates
+  MINIO_BUCKET_AVATARS: lms-avatars
+  # Azure OpenAI
+  AZURE_OPENAI_ENDPOINT: https://prade-mdpceiev-eastus2.cognitiveservices.azure.com/
+  # Real key should be provided via environment / .env, not committed
+  AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-dev-azure-openai-key}
+  AZURE_OPENAI_DEPLOYMENT: gpt-5-chat
+  AZURE_OPENAI_API_VERSION: "2025-01-01-preview"
+  AZURE_OPENAI_MINI_DEPLOYMENT: gpt-5-chat
+  # Python encoding
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+  # Inter-service URLs (Docker container names)
+  USER_SERVICE_URL: http://user-service:3001
+  COURSE_SERVICE_URL: http://course-service:3002
+  CONTENT_SERVICE_URL: http://content-service:3003
+  QUIZ_SERVICE_URL: http://quiz-engine:3004
+  BADGE_SERVICE_URL: http://badge-engine:3005
+  CERTIFICATE_SERVICE_URL: http://certificate-engine:3006
+  NOTIFICATION_SERVICE_URL: http://notification-service:3007
+  AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:3008
+  TOOL_REGISTRY_URL: http://tool-registry:3009
+  AUDIT_SERVICE_URL: http://audit-service:3010
+  LEARNER_COMPANION_URL: http://learner-companion:3011
+
+services:
+
+  # ===========================================================================
+  # INFRASTRUCTURE
+  # ===========================================================================
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: lms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       lms_db
+      POSTGRES_USER:     lms_user
+      POSTGRES_PASSWORD: lms_dev_password_123
+    ports:
+      - "5433:5432"          # 5433 on host to avoid conflict with local Postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lms_user -d lms_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: lms-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: lms-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092   # container name for Docker
+    ports:
+      - "9092:9092"
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: lms-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER:     minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: lms-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+
+  # ===========================================================================
+  # DATABASE MIGRATIONS
+  # Runs all SQL migrations in order. Uses `;` (not &&) so idempotent on re-run.
+  # ===========================================================================
+
+  migrate:
+    image: postgres:16-alpine
+    container_name: lms-migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/shared/migrations:/migrations:ro
+    environment:
+      PGPASSWORD: lms_dev_password_123
+    command: >
+      sh -c "
+        echo '=== Running LMS database migrations ===' ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V1__create_organizations.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V2__create_users.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V3__create_audit_log.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V4__create_courses.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V5__create_quiz_and_badges.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V6__create_agent_tables.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V7__create_enrollments.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V8__create_gamification.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V9__seed_badges.sql ;
+        psql -h postgres -U lms_user -d lms_db -f /migrations/V10__course_scheduling_and_paths.sql ;
+        echo '=== All migrations applied ==='
+      "
+
+  # ===========================================================================
+  # BACKEND SERVICES — Node.js / Fastify
+  # ===========================================================================
+
+  user-service:
+    build:
+      context: ./backend/services/user-service
+    container_name: lms-user-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      USER_SERVICE_PORT: "3001"
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  course-service:
+    build:
+      context: ./backend/services/course-service
+    container_name: lms-course-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      COURSE_SERVICE_PORT: "3002"
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  quiz-engine:
+    build:
+      context: ./backend/services/quiz-engine
+    container_name: lms-quiz-engine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      QUIZ_ENGINE_PORT: "3004"
+    ports:
+      - "3004:3004"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3004/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  badge-engine:
+    build:
+      context: ./backend/services/badge-engine
+    container_name: lms-badge-engine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      BADGE_ENGINE_PORT: "3005"
+    ports:
+      - "3005:3005"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3005/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  notification-service:
+    build:
+      context: ./backend/services/notification-service
+    container_name: lms-notification-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      NOTIFICATION_SERVICE_PORT: "3007"
+    ports:
+      - "3007:3007"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3007/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  audit-service:
+    build:
+      context: ./backend/services/audit-service
+    container_name: lms-audit-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      AUDIT_SERVICE_PORT: "3010"
+    ports:
+      - "3010:3010"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3010/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  mcp-server:
+    build:
+      context: ./backend/services/mcp-server
+    container_name: lms-mcp-server
+    restart: unless-stopped
+    depends_on:
+      user-service:
+        condition: service_started
+      course-service:
+        condition: service_started
+      quiz-engine:
+        condition: service_started
+      badge-engine:
+        condition: service_started
+    environment:
+      <<: *base
+      MCP_PORT: "3100"
+    ports:
+      - "3100:3100"
+
+  # ===========================================================================
+  # BACKEND SERVICES — Python / FastAPI
+  # ===========================================================================
+
+  content-service:
+    build:
+      context: ./backend/services/content-service
+    container_name: lms-content-service
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      CONTENT_SERVICE_PORT: "3003"
+    ports:
+      - "3003:3003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3003/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  certificate-engine:
+    build:
+      context: ./backend/services/certificate-engine
+    container_name: lms-certificate-engine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      CERTIFICATE_ENGINE_PORT: "3006"
+    ports:
+      - "3006:3006"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3006/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  agent-orchestrator:
+    build:
+      context: ./backend/services/agent-orchestrator
+    container_name: lms-agent-orchestrator
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+      course-service:
+        condition: service_started
+    environment:
+      <<: *base
+      AGENT_ORCHESTRATOR_PORT: "3008"
+    ports:
+      - "3008:3008"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3008/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  tool-registry:
+    build:
+      context: ./backend/services/tool-registry
+    container_name: lms-tool-registry
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *base
+      TOOL_REGISTRY_PORT: "3009"
+      TOOL_REGISTRY_SERVICE_PORT: "3009"
+    ports:
+      - "3009:3009"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3009/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  learner-companion:
+    build:
+      context: ./backend/services/learner-companion
+    container_name: lms-learner-companion
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+      course-service:
+        condition: service_started
+    environment:
+      <<: *base
+      LEARNER_COMPANION_PORT: "3011"
+    ports:
+      - "3011:3011"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3011/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # FRONTEND APPLICATIONS
+  # ===========================================================================
+
+  admin-portal:
+    build:
+      context: ./frontend
+      dockerfile: admin/Dockerfile
+    container_name: lms-admin-portal
+    restart: unless-stopped
+    depends_on:
+      user-service:
+        condition: service_started
+      course-service:
+        condition: service_started
+      agent-orchestrator:
+        condition: service_started
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  learner-portal:
+    build:
+      context: ./frontend
+      dockerfile: learner/Dockerfile
+    container_name: lms-learner-portal
+    restart: unless-stopped
+    depends_on:
+      user-service:
+        condition: service_started
+      course-service:
+        condition: service_started
+      learner-companion:
+        condition: service_started
+    ports:
+      - "5174:5174"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5174"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  postgres_data:
+  redis_data:
+  redpanda_data:
+  minio_data:

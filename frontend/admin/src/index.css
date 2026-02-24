@@ -1,0 +1,109 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-surface text-text-primary font-sans antialiased;
+    margin: 0;
+    padding: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-surface;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-indigo-500;
+  }
+}
+
+@layer components {
+  /* ── Buttons ──────────────────────────────────────────────────────────── */
+
+  .btn-primary {
+    @apply bg-indigo-500 hover:bg-indigo-600 active:bg-indigo-700 text-white font-medium px-4 py-2 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-surface-border hover:bg-surface-hover text-text-primary font-medium px-4 py-2 rounded-xl transition-colors duration-200;
+  }
+
+  .btn-ghost {
+    @apply hover:bg-surface-hover text-text-secondary hover:text-text-primary font-medium px-4 py-2 rounded-xl transition-colors duration-200;
+  }
+
+  .btn-danger {
+    @apply bg-accent-rose/10 hover:bg-accent-rose/20 text-accent-rose font-medium px-4 py-2 rounded-xl transition-colors duration-200;
+  }
+
+  /* ── Inputs ───────────────────────────────────────────────────────────── */
+
+  .input-base {
+    @apply bg-surface-input border border-surface-border text-text-primary placeholder-text-muted rounded-xl px-4 py-2.5 w-full focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all duration-200;
+  }
+
+  /* ── Cards ────────────────────────────────────────────────────────────── */
+
+  .card {
+    @apply bg-surface-card border border-surface-border rounded-2xl shadow-sm;
+  }
+
+  .card-hover {
+    @apply bg-surface-card border border-surface-border rounded-2xl shadow-sm hover:shadow-md hover:border-indigo-200 transition-all duration-200;
+  }
+
+  /* ── Badges / Pills ───────────────────────────────────────────────────── */
+
+  .badge {
+    @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full;
+  }
+
+  .badge-green   { @apply bg-accent-emerald/10 text-accent-emerald; }
+  .badge-yellow  { @apply bg-accent-amber/10 text-accent-amber; }
+  .badge-red     { @apply bg-accent-rose/10 text-accent-rose; }
+  .badge-blue    { @apply bg-indigo-500/10 text-indigo-600; }
+  .badge-purple  { @apply bg-accent-violet/10 text-accent-violet; }
+  .badge-success { @apply bg-accent-emerald/10 text-accent-emerald; }
+  .badge-warning { @apply bg-accent-amber/10 text-accent-amber; }
+  .badge-error   { @apply bg-accent-rose/10 text-accent-rose; }
+  .badge-info    { @apply bg-indigo-500/10 text-indigo-600; }
+  .badge-default { @apply bg-navy-100 text-navy-500; }
+
+  /* ── Tool call cards (chat) ───────────────────────────────────────────── */
+
+  .tool-call-card {
+    @apply flex items-center gap-3 bg-navy-50/50 rounded-xl px-4 py-3 text-sm border border-navy-100;
+  }
+
+  /* ── Sidebar (dark navy theme) ────────────────────────────────────────── */
+
+  .sidebar-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-navy-300 hover:text-white hover:bg-navy-800 transition-all duration-200 cursor-pointer;
+  }
+
+  .sidebar-link.active {
+    @apply bg-indigo-500/15 text-indigo-400 border-l-[3px] border-indigo-400;
+  }
+
+  /* ── Backward compat aliases (brand-* → indigo-*) ─────────────────── */
+  /* brand-* colors are aliased in the Tailwind preset, so existing
+     classes like bg-brand-500 still work → they resolve to indigo-500 */
+
+  /* keep old status-* classes working via the preset's status tokens */
+}
